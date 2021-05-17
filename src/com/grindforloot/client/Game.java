@@ -1,8 +1,9 @@
 package com.grindforloot.client;
 
+import io.vertx.core.Future;
+import io.vertx.core.Handler;
 import io.vertx.core.Vertx;
 import io.vertx.core.buffer.Buffer;
-import io.vertx.core.json.Json;
 import io.vertx.core.json.JsonObject;
 import io.vertx.core.net.NetClient;
 import io.vertx.core.net.NetSocket;
@@ -13,6 +14,7 @@ import javafx.scene.Group;
 import javafx.scene.Scene;
 import javafx.scene.control.Button;
 import javafx.scene.control.Label;
+import javafx.scene.control.TextField;
 import javafx.scene.control.Tooltip;
 import javafx.scene.input.MouseEvent;
 import javafx.scene.paint.Color;
@@ -23,6 +25,11 @@ import javafx.stage.Stage;
  * I want the game to be a completely modular set of windows, that can be popped out of the main window.
  * Essentially, seamless hover-over graphics that can
  * @author Evan
+ * 
+ * 
+ * Stuff to think about.
+ * Do I want to build functionality that will *wait* for a given result? I think that might be wise... and then given the result, do something with it.
+ * Custom handlers? Not sure how I want to do that
  *
  */
 public class Game extends Application{
@@ -30,84 +37,154 @@ public class Game extends Application{
 	public NetSocket socket = null;
 	public Vertx vertx = Vertx.vertx();
 	public static Stage mainStage;
+	public volatile static String sessionId = null;
+	public volatile static String address = "localhost";
+	public volatile static Integer port = 8080;
 	
 	public static void main(String...args) {
 		launch(args);
 	}
 	
-	public void connect() {
-		//todo consider how many event loop threads we want. I'm thinking 2....
-		NetClient client = vertx.createNetClient();
-		client.connect(8080, "localhost", res -> {
-			if(res.succeeded()) {
-				socket = res.result();
+	/**
+	 * This method should generate the login dialog.
+	 */
+	@Override
+	public void start(Stage loginStage) throws Exception {
+		
+		TextField email = new TextField();
+		TextField password = new TextField();
+		
+		Button login = new Button("Login");
+		login.addEventHandler(MouseEvent.MOUSE_CLICKED, event -> {
+			
+			//if we haven't started the socket yet, we attempt to do so now.
+			if(socket == null) {
 				
-				socket.handler(buffer -> {
-					JsonObject received = buffer.toJsonObject();
-					
-					switch(received.getString("type")) {
-					
-					/**
-					 * A chat message has come down the pipe. We need to display it.
-					 */
-					case "chat":
-						break;
-					
-					/**
-					 * An asynchronous game update has occured. A player moved to your location, an opponent swung in combat, etc.
-					 * 
-					 * This also represents a reply to a request sent by the user. IE, they hit move location, an update will come down the
-					 * socket describing the client update.
-					 */
-					case "update":
-						break;
+				//start the server. When that is complete, we 
+				connect().onComplete(ar -> {
+					if(ar.succeeded()) {
 						
-					
-					/**
-				    * Generate the given view.
-					* User clicks on button -> blank windows appears with a loading sign -> window gets filled asynchronously when this returns
-					* 
-				    */
-					case "view":
+						//set the handler on the socket. It'll then be listening to incoming requests
+						socket = ar.result();
+						socket.handler(getSocketHandler());
 						
-						//display an error if the view they requested wasnt the one that got loaded?
-
-						break;
+						AuthUtils.attemptAuthentication(socket, email, password);
 						
-					
-					//A server-side error has occured; display this back to the user in the form of a popup.
-					case "error":
-						String title = received.getString("title");
-						String message = received.getString("message");
-						String stackTrace = received.getString("stackTrace");
 						
-						displayError(title, message, stackTrace);
-						
-						break;
+						//TODO consider this at a later date
+						socket.closeHandler(handler -> {
+							socket = null;
+							displayError("Connection Error", "Connection closed.");
+						});
 					}
-					
-					System.out.println(received.getString("message"));
+					else
+						displayError("Connection Error", "Unable to connect to server " + address + " on port " + port);
 				});
-				
-				JsonObject json = new JsonObject();
-				json.put("action", "Signup");
-				
-				Buffer buffer = Json.encodeToBuffer(json);
-				
-				socket.write(buffer);
 			}
 			else {
-				displayError("Connection Error", "Could not connect to the server");
+				AuthUtils.attemptAuthentication(socket, email, password);
 			}
-		});		
+		});
+		
+		Button register = new Button("Click here to register");
+		
+		
+		Group group = new Group(login, register, email, password);
+		
+		
+		Scene scene = new Scene(group, 600, 300);	
+		loginStage.setScene(scene);
+		
+		loginStage.setTitle("Evan is the best");
+		loginStage.setAlwaysOnTop(false);
+		loginStage.setMinWidth(600);
+		loginStage.setMinHeight(300);
+		
+		//When the primary window closes, shut down the entire app.
+		loginStage.setOnCloseRequest(event -> {
+			vertx.close().onComplete(handler -> {
+				Platform.exit();
+			});
+		});
+		loginStage.show();
+		
+		mainStage = loginStage;
 	}
 	
+	public Future<NetSocket> connect(){
+		NetClient client = vertx.createNetClient();
+		
+		return client.connect(port, address);
+	}
+	
+	/**
+	 * Generate the handler for the socket.
+	 * @return
+	 */
+	public Handler<Buffer> getSocketHandler(){
+		return buffer -> {
+			JsonObject received = buffer.toJsonObject();
+			
+			switch(received.getString("type")) {
+			case "auth":
+				if(sessionId != null)
+					displayError("Auth Error", "Attempted to authenticate when you're already logged in. Que pasa?");
+				
+				sessionId = received.getString("sessionId");
+				
+				//other stuff
+				
+				break;
+			
+			/**
+			 * A chat message has come down the pipe. We need to display it.
+			 */
+			case "chat":
+				break;
+			
+			/**
+			 * An asynchronous game update has occured. A player moved to your location, an opponent swung in combat, etc.
+			 * 
+			 * This also represents a reply to a request sent by the user. IE, they hit move location, an update will come down the
+			 * socket describing the client update.
+			 */
+			case "update":
+				break;
+				
+			
+			/**
+		    * Generate the given view.
+			* User clicks on button -> blank windows appears with a loading sign -> window gets filled asynchronously when this returns
+			* 
+		    */
+			case "view":
+				
+				//display an error if the view they requested wasnt the one that got loaded?
+
+				break;
+				
+			
+			//A server-side error has occured; display this back to the user in the form of a popup.
+			case "error":
+				String title = received.getString("title");
+				String message = received.getString("message");
+				String stackTrace = received.getString("stackTrace");
+				
+				displayError(title, message, stackTrace);
+				
+				break;
+			}
+			
+			System.out.println(received.getString("message"));
+		};
+	}
+		
 	/**
 	 * Generate an error popup for the user; this will not display any stack trace.
 	 * @param title
 	 * @param message
 	 */
-	public void displayError(String title, String message) {
+	public static void displayError(String title, String message) {
 		displayError(title, message, null);
 	}
 	
@@ -117,11 +194,13 @@ public class Game extends Application{
 	 * @param message
 	 * @param stackTrace
 	 */
-	public void displayError(String title, String message, String stackTrace) {
+	public static void displayError(String title, String message, String stackTrace) {
 		
 		Stage errorStage = new Stage();
 		errorStage.setTitle(title);
-		errorStage.focusedProperty().addListener((ov, onHidden, onShown) -> {
+		
+		//Add a listener to close the error when the user loses focus on it. Is this wise? Who knows
+		errorStage.focusedProperty().addListener((ov, oldValue, newValue) -> {
 			if(false == errorStage.isFocused())
 				Platform.runLater(() -> errorStage.close());
 		});
@@ -165,9 +244,9 @@ public class Game extends Application{
 		errorStage.setAlwaysOnTop(true);
 	}
 
-	@Override
-	public void start(Stage stage) throws Exception {		
 
+	
+	public void example() {
 		Circle circle = new Circle();
 		
 		circle.setCenterX(300);
@@ -205,21 +284,5 @@ public class Game extends Application{
 		Tooltip.install(circle, test);
 		
 		Group root = new Group(circle);
-		
-		
-		Scene scene = new Scene(root, 600, 300);	
-		stage.setScene(scene);
-		
-		stage.setTitle("Evan is the best");
-		stage.setAlwaysOnTop(false);
-		stage.setMinWidth(600);
-		stage.setMinHeight(300);
-		stage.setOnCloseRequest(event -> {
-			vertx.close();
-			System.exit(0);
-		});
-		stage.show();
-		
-		mainStage = stage;
 	}
 }
