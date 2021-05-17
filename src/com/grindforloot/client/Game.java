@@ -1,5 +1,8 @@
 package com.grindforloot.client;
 
+import java.util.Map;
+import java.util.Map.Entry;
+
 import io.vertx.core.Future;
 import io.vertx.core.Handler;
 import io.vertx.core.Vertx;
@@ -27,14 +30,13 @@ import javafx.stage.Stage;
  * @author Evan
  * 
  * 
- * Stuff to think about.
- * Do I want to build functionality that will *wait* for a given result? I think that might be wise... and then given the result, do something with it.
- * Custom handlers? Not sure how I want to do that
+ * 
  *
  */
 public class Game extends Application{
 	
 	public NetSocket socket = null;
+	private volatile Map<String, Handler<JsonObject>> replyHandlers;
 	public Vertx vertx = Vertx.vertx();
 	public static Stage mainStage;
 	public volatile static String sessionId = null;
@@ -49,8 +51,7 @@ public class Game extends Application{
 	 * This method should generate the login dialog.
 	 */
 	@Override
-	public void start(Stage loginStage) throws Exception {
-		
+	public void start(Stage loginStage) throws Exception {		
 		TextField email = new TextField();
 		TextField password = new TextField();
 		
@@ -126,16 +127,27 @@ public class Game extends Application{
 			JsonObject received = buffer.toJsonObject();
 			
 			switch(received.getString("type")) {
-			case "auth":
-				if(sessionId != null)
-					displayError("Auth Error", "Attempted to authenticate when you're already logged in. Que pasa?");
+			case "reply":
 				
-				sessionId = received.getString("sessionId");
-				
-				//other stuff
+				String uniqueId = received.getString("identifier");
+				if(uniqueId == null) {
+					//I think we just fail silently?
+				}
+				else {
+					//find the handler for this reply
+					for(Entry<String, Handler<JsonObject>> entry : replyHandlers.entrySet()) {
+						if(uniqueId.equals(entry.getKey())) {
+							
+							//handle the reply
+							entry.getValue().handle(received);
+							
+							//remove this handler
+							replyHandlers.remove(entry.getKey());
+						}
+					}
+				}
 				
 				break;
-			
 			/**
 			 * A chat message has come down the pipe. We need to display it.
 			 */
@@ -177,6 +189,10 @@ public class Game extends Application{
 			
 			System.out.println(received.getString("message"));
 		};
+	}
+	
+	public void registerReplyHandler(String key, Handler<JsonObject> handler) {
+		replyHandlers.put(key, handler);
 	}
 		
 	/**
