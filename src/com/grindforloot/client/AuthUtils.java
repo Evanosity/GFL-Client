@@ -10,7 +10,7 @@ public class AuthUtils {
 	 * @param original
 	 * @return
 	 */
-	public String hashString(String original) {
+	public static String hashString(String original) {
 		byte[] rawHash = hashString(original, "SHA3-256");
 		return new String(rawHash, StandardCharsets.UTF_8);
 	}
@@ -21,13 +21,13 @@ public class AuthUtils {
 	 * @param algorithm - the algorithm to use
 	 * @return a byte array; the hash
 	 */
-	private byte[] hashString(String original, String algorithm) {
+	private static byte[] hashString(String original, String algorithm) {
 		try {
 			MessageDigest digest;
 			digest = MessageDigest.getInstance(algorithm);
 			return digest.digest(original.getBytes(StandardCharsets.UTF_8));
 		} catch (NoSuchAlgorithmException e) {
-			//this algorithm does exist so suck it
+			//I don't foresee doing anything other than SHA3-256 so ignore it
 		}
 		
 		return new byte[0];
